@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>C.H.R 26 — Planning</title>
+<link rel="icon" href="data:,">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+html, body, #root { height: 100%; margin: 0; font-family: 'Inter', sans-serif; }
+* { -webkit-tap-highlight-color: transparent; }
+</style>
+<script>
+window.onerror = function(msg, url, line, col, error) {
+  var root = document.getElementById('root');
+  if (root) {
+    root.innerHTML = '<pre style="white-space:pre-wrap;padding:16px;color:#b91c1c;font-size:13px;font-family:monospace;background:#fef2f2;">ERREUR JS:\n' +
+      msg + '\n(ligne ' + line + ', colonne ' + col + ')' +
+      (error && error.stack ? '\n\n' + error.stack : '') + '</pre>';
+  }
+  return false;
+};
+</script>
+</head>
+<body>
+<div id="root">Chargement du script…</div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+// ---- Supabase connection ----
+const SUPABASE_URL = "https://fpefidfhxsiuidlhwxdq.supabase.co";
+const SUPABASE_KEY = "sb_publishable_6m7p1_TFrVL1rdjzdJuEXQ_ylo3XyQF";
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ---- palette ----
+const HEADER_DARK = "#3a4650";
+const TOOLBAR_GREY = "#83898d";
+const GREEN = "#7cc242";
+const BLUE = "#1783e0";
+const RED = "#d9433a";
+
+const TYPE_COLORS = {
+  Depannage: "#e0742a",
+  Maintenance: "#1783e0",
+  Installation: "#3fa66b",
+  Urgence: "#d9433a",
+  Atelier: "#6b7280",
+};
+
+function pad(n) { return String(n).padStart(2, "0"); }
+function isoDate(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function frDate(iso) { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; }
+function addDays(iso, n) { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return isoDate(d); }
+function uid() { return Math.random().toString(36).slice(2, 9); }
+
+const INT_TYPES = ["Atelier", "Depannage", "Maintenance", "Installation", "Urgence"];
+const FLAGS = ["Prioritaire", "Garantie", "Astreinte", "Sous contrat", "Retour SAV"];
+
+function dbClientToApp(c) {
+  return { id: c.id, name: c.name, address: c.address || "", phone: c.phone || "", email: c.email || "", sites: c.sites || [], equipment: c.equipment || [] };
+}
+function dbInterventionToApp(it) {
+  return { id: it.id, client: it.client || "", site: it.site || "", equipment: it.equipment || "", type: it.type || "", description: it.description || "", flags: it.flags || [], date: it.date, time: it.time || "" };
+}
+
+function App() {
+  const [interventions, setInterventions] = useState(null);
+  const [clients, setClients] = useState(null);
+  const [day, setDay] = useState(isoDate(new Date()));
+  const [screen, setScreen] = useState({ name: "list" });
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [{ data: cRows, error: cErr }, { data: iRows, error: iErr }] = await Promise.all([
+          sbClient.from("clients").select("*").order("created_at", { ascending: true }),
+          sbClient.from("interventions").select("*").order("created_at", { ascending: true }),
+        ]);
+        if (cErr) throw cErr;
+        if (iErr) throw iErr;
+        setClients((cRows || []).map(dbClientToApp));
+        setInterventions((iRows || []).map(dbInterventionToApp));
+      } catch (e) {
+        console.error("initial load failed", e);
+        setSaveError("Impossible de charger les données : " + (e.message || String(e)));
+        setClients([]); setInterventions([]);
+      }
+    })();
+  }, []);
+
+  function flash() { setSaveError(null); setSaved(true); setTimeout(() => setSaved(false), 1200); }
+  function fail(e) { console.error(e); setSaveError(e.message || "Échec de l'enregistrement"); }
+
+  if (interventions === null || clients === null) {
+    return <div className="h-screen flex items-center justify-center bg-white text-slate-400">Chargement…</div>;
+  }
+
+  const dayItems = interventions.filter((it) => it.date === day).slice().sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+
+  async function saveIntervention(item) {
+    try {
+      const body = { client: item.client, site: item.site, equipment: item.equipment, type: item.type, description: item.description, flags: item.flags, date: item.date, time: item.time };
+      const isExisting = interventions.some((p) => p.id === item.id);
+      if (isExisting) {
+        const { data, error } = await sbClient.from("interventions").update(body).eq("id", item.id).select();
+        if (error) throw error;
+        const updated = dbInterventionToApp(data[0]);
+        setInterventions((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      } else {
+        const { data, error } = await sbClient.from("interventions").insert(body).select();
+        if (error) throw error;
+        const created = dbInterventionToApp(data[0]);
+        setInterventions((prev) => [...prev, created]);
+      }
+      flash();
+    } catch (e) { fail(e); }
+  }
+  async function deleteIntervention(id) {
+    try {
+      const { error } = await sbClient.from("interventions").delete().eq("id", id);
+      if (error) throw error;
+      setInterventions((prev) => prev.filter((p) => p.id !== id));
+      flash();
+    } catch (e) { fail(e); }
+  }
+
+  async function addClient(name, address, phone, email) {
+    try {
+      const { data, error } = await sbClient.from("clients").insert({ name, address, phone, email, sites: [], equipment: [] }).select();
+      if (error) throw error;
+      const created = dbClientToApp(data[0]);
+      setClients((prev) => [...prev, created]);
+      flash();
+      return created;
+    } catch (e) { fail(e); return null; }
+  }
+  async function deleteClient(id) {
+    try {
+      const { error } = await sbClient.from("clients").delete().eq("id", id);
+      if (error) throw error;
+      setClients((prev) => prev.filter((c) => c.id !== id));
+      flash();
+    } catch (e) { fail(e); }
+  }
+  async function patchClient(clientId, patch) {
+    try {
+      const { data, error } = await sbClient.from("clients").update(patch).eq("id", clientId).select();
+      if (error) throw error;
+      const updated = dbClientToApp(data[0]);
+      setClients((prev) => prev.map((c) => (c.id === clientId ? updated : c)));
+      flash();
+    } catch (e) { fail(e); }
+  }
+  function addSite(clientId, siteName) {
+    const c = clients.find((c) => c.id === clientId);
+    if (!c) return;
+    patchClient(clientId, { sites: [...c.sites, siteName] });
+  }
+  function deleteSite(clientId, siteName) {
+    const c = clients.find((c) => c.id === clientId);
+    if (!c) return;
+    patchClient(clientId, { sites: c.sites.filter((s) => s !== siteName) });
+  }
+  function addEquipment(clientId, code, label) {
+    const c = clients.find((c) => c.id === clientId);
+    if (!c) return;
+    const item = { id: uid(), code, label };
+    patchClient(clientId, { equipment: [...c.equipment, item] });
+    return item;
+  }
+  function deleteEquipment(clientId, equipId) {
+    const c = clients.find((c) => c.id === clientId);
+    if (!c) return;
+    patchClient(clientId, { equipment: c.equipment.filter((e) => e.id !== equipId) });
+  }
+
+  return (
+    <div className="h-screen w-full flex flex-col bg-white overflow-hidden select-none" style={{ fontFamily: "Inter, sans-serif" }}>
+      {saveError && (
+        <div className="bg-red-600 text-white text-[12px] px-3 py-1.5 shrink-0 flex items-center justify-between gap-2">
+          <span className="truncate">⚠ {saveError}</span>
+          <button onClick={() => setSaveError(null)} className="shrink-0 font-bold">✕</button>
+        </div>
+      )}
+      {saved && !saveError && (
+        <div className="bg-emerald-600 text-white text-[12px] px-3 py-1 shrink-0 text-center">✓ Enregistré</div>
+      )}
+      {screen.name === "list" && (
+        <ListScreen
+          day={day} setDay={setDay} items={dayItems}
+          onNew={() => setScreen({ name: "form", item: null })}
+          onOpen={(item) => setScreen({ name: "form", item })}
+        />
+      )}
+      {screen.name === "form" && (
+        <FormScreen
+          initial={screen.item}
+          defaultDate={day}
+          clients={clients}
+          addClient={addClient}
+          deleteClient={deleteClient}
+          addSite={addSite}
+          deleteSite={deleteSite}
+          addEquipment={addEquipment}
+          deleteEquipment={deleteEquipment}
+          onCancel={() => setScreen({ name: "list" })}
+          onSave={(item) => { saveIntervention(item); setScreen({ name: "list" }); }}
+          onDelete={(id) => { deleteIntervention(id); setScreen({ name: "list" }); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ LIST
+function ListScreen({ day, setDay, items, onNew, onOpen }) {
+  return (
+    <>
+      <div className="flex items-center gap-3 px-3 py-3 text-white shrink-0" style={{ background: HEADER_DARK }}>
+        <div className="w-6 h-6 rounded-full bg-blue-500 shrink-0" />
+        <span className="font-bold text-[17px] flex-1 truncate">Jordan — Frigex Pro</span>
+        <span className="text-lg">↻</span>
+      </div>
+      <div className="flex items-center gap-3 px-3 py-2 text-white shrink-0" style={{ background: TOOLBAR_GREY }}>
+        <span className="text-lg">🗺</span>
+        <span className="text-lg">📅</span>
+        <button onClick={() => setDay(addDays(day, -1))} className="text-xl px-1">‹</button>
+        <span className="flex-1 text-center bg-white/10 border border-white/40 rounded px-3 py-1 text-[15px] font-medium" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+          {frDate(day)}
+        </span>
+        <button onClick={() => setDay(addDays(day, 1))} className="text-xl px-1">›</button>
+        <button onClick={onNew} className="text-2xl leading-none px-1">+</button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {items.length === 0 && (
+          <div className="text-center text-slate-400 text-sm mt-10 px-6">
+            Aucune intervention ce jour. Touchez <span className="font-semibold">+</span> pour en créer une.
+          </div>
+        )}
+        {items.map((it) => (
+          <button key={it.id} onClick={() => onOpen(it)} className="w-full flex items-stretch border-b border-slate-200 active:bg-slate-50 text-left">
+            <div className="w-1.5 shrink-0" style={{ background: TYPE_COLORS[it.type] || "#999" }} />
+            <div className="flex-1 px-3 py-3">
+              <div className="text-[17px] text-slate-900 leading-tight">{it.type}</div>
+              <div className="text-[15px] text-slate-700 leading-tight mt-0.5">{it.client}</div>
+              {it.site && <div className="text-[15px] text-slate-700 leading-tight">{it.site}</div>}
+              {it.equipment && <div className="text-[13px] text-slate-500 leading-tight mt-0.5">{it.equipment}</div>}
+              {it.description && <div className="text-[13px] text-slate-500 leading-tight mt-0.5">{it.description}</div>}
+              <div className="text-[13px] text-slate-500 mt-1">{it.time ? `Heure : ${it.time}` : ""}</div>
+              {it.flags && it.flags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {it.flags.map((f) => <span key={f} className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">{f}</span>)}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center pr-3 text-slate-300">›</div>
+          </button>
+        ))}
+      </div>
+      <div className="flex items-stretch border-t border-slate-200 bg-white shrink-0" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        {[{ label: "Interventions", active: true, icon: "🏠" }, { label: "A proximité", active: false, icon: "📍" }, { label: "Plus", active: false, icon: "•••" }].map(({ label, active, icon }) => (
+          <div key={label} className="flex-1 flex flex-col items-center gap-0.5 py-2">
+            <span style={{ color: active ? BLUE : "#333" }}>{icon}</span>
+            <span className="text-[11px] font-medium" style={{ color: active ? BLUE : "#333" }}>{label}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ------------------------------------------------------------------ SWIPE ROW
+function SwipeRow({ onDelete, children, onClick }) {
+  const [tx, setTx] = useState(0);
+  const drag = useRef(null);
+  const openRef = useRef(false);
+
+  function start(x, y) { drag.current = { x, y, tx0: tx, horiz: null }; }
+  function move(x, y) {
+    const d = drag.current;
+    if (!d) return false;
+    const dx = x - d.x, dy = y - d.y;
+    if (d.horiz === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) d.horiz = Math.abs(dx) > Math.abs(dy);
+    if (d.horiz) {
+      let next = d.tx0 + dx;
+      next = Math.max(-84, Math.min(0, next));
+      setTx(next);
+      return true;
+    }
+    return false;
+  }
+  function end() {
+    const d = drag.current;
+    if (d && d.horiz) {
+      const willOpen = tx < -40;
+      setTx(willOpen ? -84 : 0);
+      openRef.current = willOpen;
+    }
+    drag.current = null;
+  }
+  function handleClick() {
+    if (openRef.current) { setTx(0); openRef.current = false; return; }
+    onClick && onClick();
+  }
+
+  return (
+    <div className="relative overflow-hidden border-b border-slate-200">
+      <div className="absolute inset-y-0 right-0 w-[84px] flex items-center justify-center" style={{ background: RED }} onClick={() => { onDelete(); setTx(0); openRef.current = false; }}>
+        <span className="text-white text-lg">🗑</span>
+      </div>
+      <div
+        className="bg-white"
+        style={{ transform: `translateX(${tx}px)`, transition: drag.current ? "none" : "transform 0.18s", touchAction: "pan-y" }}
+        onTouchStart={(e) => start(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchMove={(e) => { if (move(e.touches[0].clientX, e.touches[0].clientY) && e.cancelable) e.preventDefault(); }}
+        onTouchEnd={end}
+        onMouseDown={(e) => start(e.clientX, e.clientY)}
+        onMouseMove={(e) => { if (e.buttons === 1) move(e.clientX, e.clientY); }}
+        onMouseUp={end}
+        onMouseLeave={() => drag.current && end()}
+        onClick={handleClick}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ FORM
+function FormScreen({ initial, defaultDate, clients, addClient, deleteClient, addSite, deleteSite, addEquipment, deleteEquipment, onCancel, onSave, onDelete }) {
+  const [form, setForm] = useState(initial || {
+    id: String(Date.now()), clientId: "", client: "", site: "", equipment: "", type: "", description: "", flags: [], date: defaultDate, time: "",
+  });
+  const [picker, setPicker] = useState(null);
+
+  function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+  const valid = form.client && form.type;
+  const currentClient = clients.find((c) => c.id === form.clientId) || clients.find((c) => c.name === form.client);
+
+  if (picker === "client") {
+    return (
+      <ClientPicker
+        clients={clients}
+        value={form.client}
+        onSelect={(c) => { set("clientId", c.id); set("client", c.name); set("site", ""); set("equipment", ""); setPicker(null); }}
+        onDelete={deleteClient}
+        onAdd={() => setPicker("client-add")}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "client-add") {
+    return (
+      <AddScreen
+        title="Nouveau client"
+        fields={[
+          { key: "name", label: "Nom du client", placeholder: "Ex : Brasserie du Port" },
+          { key: "address", label: "Adresse", placeholder: "Ex : 2 quai de Seine, Argenteuil" },
+          { key: "phone", label: "Téléphone", placeholder: "Ex : 01 39 12 44 55" },
+          { key: "email", label: "Email", placeholder: "Ex : contact@client.fr" },
+        ]}
+        onCancel={() => setPicker("client")}
+        onSave={async (vals) => {
+          if (!vals.name.trim()) return;
+          const c = await addClient(vals.name.trim(), vals.address.trim(), vals.phone.trim(), vals.email.trim());
+          if (c) { set("clientId", c.id); set("client", c.name); set("site", ""); set("equipment", ""); }
+          setPicker(null);
+        }}
+      />
+    );
+  }
+  if (picker === "site") {
+    const sites = currentClient ? currentClient.sites : [];
+    return (
+      <ListPicker
+        title="Site"
+        options={sites}
+        value={form.site}
+        onSelect={(v) => { set("site", v); setPicker(null); }}
+        onDelete={(v) => currentClient && deleteSite(currentClient.id, v)}
+        onAdd={currentClient ? () => setPicker("site-add") : null}
+        emptyMessage={currentClient ? "Aucun site. Touchez + pour en ajouter un." : "Choisissez d'abord un client."}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "site-add") {
+    return (
+      <AddScreen
+        title="Nouveau site"
+        fields={[{ key: "name", label: "Nom du site", placeholder: "Ex : Paris 15e" }]}
+        onCancel={() => setPicker("site")}
+        onSave={(vals) => {
+          if (!vals.name.trim() || !currentClient) return;
+          addSite(currentClient.id, vals.name.trim());
+          set("site", vals.name.trim());
+          setPicker(null);
+        }}
+      />
+    );
+  }
+  if (picker === "equipment") {
+    const equip = currentClient ? currentClient.equipment : [];
+    return (
+      <ListPicker
+        title="Equipement"
+        options={equip.map((e) => `${e.code} — ${e.label}`)}
+        value={form.equipment}
+        onSelect={(v) => { set("equipment", v); setPicker(null); }}
+        onDelete={(v) => { const item = equip.find((e) => `${e.code} — ${e.label}` === v); if (currentClient && item) deleteEquipment(currentClient.id, item.id); }}
+        onAdd={currentClient ? () => setPicker("equipment-add") : null}
+        emptyMessage={currentClient ? "Aucun matériel référencé. Touchez + pour en ajouter un." : "Choisissez d'abord un client."}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "equipment-add") {
+    return (
+      <AddScreen
+        title="Nouveau matériel"
+        fields={[
+          { key: "code", label: "Code / N° unique", placeholder: "Ex : 25732" },
+          { key: "label", label: "Désignation", placeholder: "Ex : Four Rational" },
+        ]}
+        onCancel={() => setPicker("equipment")}
+        onSave={(vals) => {
+          if (!vals.code.trim() || !vals.label.trim() || !currentClient) return;
+          addEquipment(currentClient.id, vals.code.trim(), vals.label.trim());
+          set("equipment", `${vals.code.trim()} — ${vals.label.trim()}`);
+          setPicker(null);
+        }}
+      />
+    );
+  }
+  if (picker === "type") {
+    return <ListPicker title="Type Int." options={INT_TYPES} value={form.type} onSelect={(v) => { set("type", v); setPicker(null); }} onBack={() => setPicker(null)} />;
+  }
+  if (picker === "flags") {
+    return (
+      <ListPicker
+        title="Drapeaux" options={FLAGS} multi value={form.flags}
+        onToggle={(v) => set("flags", form.flags.includes(v) ? form.flags.filter((f) => f !== v) : [...form.flags, v])}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "description") {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0" style={{ background: HEADER_DARK }}>
+          <button onClick={() => setPicker(null)} className="text-xl">‹</button>
+          <span className="font-bold text-[17px] flex-1">Description</span>
+          <button onClick={() => setPicker(null)} className="font-semibold text-[15px]">OK</button>
+        </div>
+        <textarea autoFocus value={form.description} onChange={(e) => set("description", e.target.value)} className="flex-1 p-3 text-[15px] outline-none resize-none" placeholder="Description de l'intervention…" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0" style={{ background: HEADER_DARK }}>
+        <span className="font-bold text-[17px] text-center flex-1">{initial ? "Intervention" : "Nouvelle intervention"}</span>
+      </div>
+      <div className="flex items-center gap-3 px-3 py-2 shrink-0" style={{ background: TOOLBAR_GREY }}>
+        <button onClick={onCancel} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2" style={{ background: "#555f66" }}>Annuler</button>
+        <button onClick={() => valid && onSave(form)} disabled={!valid} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2 disabled:opacity-50" style={{ background: GREEN }}>Valider</button>
+      </div>
+      <div className="flex-1 overflow-y-auto bg-slate-100">
+        <div className="bg-white mt-2">
+          <Row required label="Client" value={form.client} onClick={() => setPicker("client")} />
+          <Row label="Site" value={form.site} onClick={() => setPicker("site")} />
+          <Row label="Equipement" value={form.equipment} onClick={() => setPicker("equipment")} />
+          <Row required label="Type Int." value={form.type} onClick={() => setPicker("type")} />
+          <Row label="Description" value={form.description} onClick={() => setPicker("description")} last />
+        </div>
+        <div className="bg-white mt-4"><Row label="Drapeaux" value={form.flags.join(", ")} onClick={() => setPicker("flags")} last /></div>
+        <div className="bg-white mt-4">
+          <div className="flex items-center justify-between px-3 py-3 border-b border-slate-200">
+            <span className="text-[15px] text-slate-800">Date</span>
+            <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="text-[15px] text-right outline-none" />
+          </div>
+          <div className="flex items-center justify-between px-3 py-3">
+            <span className="text-[15px] text-slate-800">Heure</span>
+            <input type="time" value={form.time} onChange={(e) => set("time", e.target.value)} className="text-[15px] text-right outline-none" />
+          </div>
+        </div>
+        {initial && (
+          <button onClick={() => onDelete(form.id)} className="w-full flex items-center justify-center gap-2 text-red-600 font-medium text-[15px] py-3 mt-4 mb-6 bg-white">
+            🗑 Supprimer l'intervention
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+function Row({ label, value, onClick, required, last }) {
+  return (
+    <button onClick={onClick} className={`w-full flex items-center justify-between px-3 py-3 active:bg-slate-50 ${last ? "" : "border-b border-slate-200"}`}>
+      <span className="text-[15px] text-slate-800 shrink-0">{required && <span className="text-red-500">*</span>}{label}</span>
+      <span className="text-[15px] text-slate-400 truncate ml-3 flex items-center gap-1">
+        <span className="truncate max-w-[180px]">{value || ""}</span>
+        <span className="text-slate-300">›</span>
+      </span>
+    </button>
+  );
+}
+
+function ListPicker({ title, options, value, onSelect, onToggle, onBack, multi, onDelete, onAdd, emptyMessage }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0 relative" style={{ background: HEADER_DARK }}>
+        <button onClick={onBack} className="flex items-center gap-1"><span className="text-xl">‹</span><span className="text-[15px]">Retour</span></button>
+        <span className="font-bold text-[17px] flex-1 text-center pr-12">{title}</span>
+        {onAdd && <button onClick={onAdd} className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl leading-none">+</button>}
+      </div>
+      <div className="flex-1 overflow-y-auto bg-white relative">
+        {options.length === 0 && emptyMessage && <div className="text-center text-slate-400 text-sm mt-10 px-6">{emptyMessage}</div>}
+        {options.map((opt) => {
+          const selected = multi ? value.includes(opt) : value === opt;
+          const rowContent = (
+            <div className="w-full flex items-center justify-between px-3 py-3">
+              <span className="text-[15px] text-slate-800">{opt}</span>
+              {selected && <span style={{ color: BLUE }}>✓</span>}
+            </div>
+          );
+          if (onDelete) {
+            return <SwipeRow key={opt} onDelete={() => onDelete(opt)} onClick={() => (multi ? onToggle(opt) : onSelect(opt))}>{rowContent}</SwipeRow>;
+          }
+          return (
+            <button key={opt} onClick={() => (multi ? onToggle(opt) : onSelect(opt))} className="w-full border-b border-slate-200 active:bg-slate-50 text-left">
+              {rowContent}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ClientPicker({ clients, value, onSelect, onDelete, onAdd, onBack }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0 relative" style={{ background: HEADER_DARK }}>
+        <button onClick={onBack} className="flex items-center gap-1"><span className="text-xl">‹</span><span className="text-[15px]">Retour</span></button>
+        <span className="font-bold text-[17px] flex-1 text-center pr-12">Client</span>
+        <button onClick={onAdd} className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl leading-none">+</button>
+      </div>
+      <div className="px-3 py-2 text-[12px] text-slate-400 bg-white border-b border-slate-100">Glissez une fiche vers la gauche pour la supprimer</div>
+      <div className="flex-1 overflow-y-auto bg-white">
+        {clients.length === 0 && <div className="text-center text-slate-400 text-sm mt-10 px-6">Aucun client. Touchez + pour en ajouter un.</div>}
+        {clients.map((c) => (
+          <SwipeRow key={c.id} onDelete={() => onDelete(c.id)} onClick={() => onSelect(c)}>
+            <div className="w-full flex items-center justify-between px-3 py-3">
+              <div className="min-w-0">
+                <div className="text-[15px] text-slate-800 truncate">{c.name}</div>
+                {(c.address || c.phone) && (
+                  <div className="text-[12px] text-slate-400 truncate">{[c.address, c.phone].filter(Boolean).join(" · ")}</div>
+                )}
+              </div>
+              {value === c.name && <span style={{ color: BLUE }} className="shrink-0 ml-2">✓</span>}
+            </div>
+          </SwipeRow>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AddScreen({ title, fields, onCancel, onSave }) {
+  const [vals, setVals] = useState(Object.fromEntries(fields.map((f) => [f.key, ""])));
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0" style={{ background: HEADER_DARK }}>
+        <span className="font-bold text-[17px] flex-1 text-center">{title}</span>
+      </div>
+      <div className="flex items-center gap-3 px-3 py-2 shrink-0" style={{ background: TOOLBAR_GREY }}>
+        <button onClick={onCancel} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2" style={{ background: "#555f66" }}>Annuler</button>
+        <button onClick={() => onSave(vals)} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2" style={{ background: GREEN }}>Ajouter</button>
+      </div>
+      <div className="bg-slate-100 flex-1 p-3 space-y-3">
+        {fields.map((f) => (
+          <div key={f.key} className="bg-white rounded-md px-3 py-2">
+            <div className="text-[11px] text-slate-400">{f.label}</div>
+            <input
+              autoFocus={fields[0].key === f.key}
+              value={vals[f.key]}
+              onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))}
+              placeholder={f.placeholder}
+              className="w-full text-[15px] outline-none mt-0.5"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
