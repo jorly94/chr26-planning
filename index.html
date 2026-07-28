@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>C.H.R 26 — Planning</title>
+<link rel="icon" href="data:,">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+html, body, #root { height: 100%; margin: 0; font-family: 'Inter', sans-serif; }
+* { -webkit-tap-highlight-color: transparent; }
+</style>
+<script>
+window.onerror = function(msg, url, line, col, error) {
+  var root = document.getElementById('root');
+  if (root) {
+    root.innerHTML = '<pre style="white-space:pre-wrap;padding:16px;color:#b91c1c;font-size:13px;font-family:monospace;background:#fef2f2;">ERREUR JS:\n' +
+      msg + '\n(ligne ' + line + ', colonne ' + col + ')' +
+      (error && error.stack ? '\n\n' + error.stack : '') + '</pre>';
+  }
+  return false;
+};
+</script>
+</head>
+<body>
+<div id="root">Chargement du script…</div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+// ---- Supabase connection ----
+const SUPABASE_URL = "https://fpefidfhxsiuidlhwxdq.supabase.co";
+const SUPABASE_KEY = "sb_publishable_6m7p1_TFrVL1rdjzdJuEXQ_ylo3XyQF";
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ---- palette ----
+const HEADER_DARK = "#3a4650";
+const TOOLBAR_GREY = "#83898d";
+const GREEN = "#7cc242";
+const BLUE = "#1783e0";
+const RED = "#d9433a";
+const AMBER = "#e0a020";
+
+const TYPE_COLORS = {
+  Depannage: "#e0742a",
+  Maintenance: "#1783e0",
+  Installation: "#3fa66b",
+  Urgence: "#d9433a",
+  Atelier: "#6b7280",
+};
+
+const STATUS_INFO = {
+  attente: { label: "En attente", color: "#94a3b8" },
+  devis: { label: "Devis à suivre", color: AMBER },
+  cloture: { label: "Clôturé", color: GREEN },
+};
+
+function pad(n) { return String(n).padStart(2, "0"); }
+function isoDate(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function frDate(iso) { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; }
+function addDays(iso, n) { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return isoDate(d); }
+function nowTime() { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+
+const INT_TYPES = ["Atelier", "Depannage", "Maintenance", "Installation", "Urgence"];
+const FLAGS = ["Prioritaire", "Garantie", "Astreinte", "Sous contrat", "Retour SAV"];
+
+function dbClientToApp(c) {
+  return {
+    id: c.id, name: c.name, address: c.address || "", phone: c.phone || "", email: c.email || "",
+    sites: c.sites || [], contactName: c.contact_name || "", postalCode: c.postal_code || "",
+    city: c.city || "", siret: c.siret || "", notes: c.notes || "",
+  };
+}
+
+const CLIENT_FIELDS = [
+  { key: "name", label: "Nom de l'établissement", placeholder: "Ex : Brasserie du Port" },
+  { key: "contactName", label: "Nom du contact", placeholder: "Ex : M. Dupont" },
+  { key: "phone", label: "Téléphone", placeholder: "Ex : 01 39 12 44 55" },
+  { key: "email", label: "Email", placeholder: "Ex : contact@client.fr" },
+  { key: "address", label: "Adresse (rue + n°)", placeholder: "Ex : 2 quai de Seine" },
+  { key: "postalCode", label: "Code postal", placeholder: "Ex : 95100" },
+  { key: "city", label: "Ville", placeholder: "Ex : Argenteuil" },
+  { key: "siret", label: "SIRET (optionnel)", placeholder: "" },
+  { key: "notes", label: "Informations complémentaires", placeholder: "" },
+];
+
+function clientValsToPatch(vals) {
+  return {
+    name: (vals.name || "").trim(),
+    address: (vals.address || "").trim(),
+    phone: (vals.phone || "").trim(),
+    email: (vals.email || "").trim(),
+    contact_name: (vals.contactName || "").trim(),
+    postal_code: (vals.postalCode || "").trim(),
+    city: (vals.city || "").trim(),
+    siret: (vals.siret || "").trim(),
+    notes: (vals.notes || "").trim(),
+  };
+}
+function dbEquipmentToApp(e) {
+  return { id: e.id, clientId: e.client_id, code: e.code || "", label: e.label || "", model: e.model || "", serial: e.serial || "" };
+}
+function dbInterventionToApp(it) {
+  return {
+    id: it.id, clientId: it.client_id || null, client: it.client || "", site: it.site || "",
+    equipmentId: it.equipment_id || null, equipment: it.equipment || "",
+    type: it.type || "", description: it.description || "", flags: it.flags || [],
+    date: it.date, time: it.time || "", status: it.status || "attente",
+    report: it.report || "", technician: it.technician || "Moi",
+  };
+}
+
+function loadFonts() {}
+
+function dbArticleToApp(a) {
+  return { id: a.id, reference: a.reference || "", label: a.label || "", purchasePrice: Number(a.purchase_price) || 0, salePrice: Number(a.sale_price) || 0, supplier: a.supplier || "", tvaRate: a.tva_rate == null ? 20 : Number(a.tva_rate) };
+}
+function dbQuoteToApp(q) {
+  return { id: q.id, clientId: q.client_id || null, equipmentId: q.equipment_id || null, interventionId: q.intervention_id || null, items: q.items || [], status: q.status || "brouillon" };
+}
+
+async function loadAll() {
+  const [c, e, i, a, q] = await Promise.all([
+    sbClient.from("clients").select("*").order("created_at", { ascending: true }),
+    sbClient.from("equipment").select("*").order("created_at", { ascending: true }),
+    sbClient.from("interventions").select("*").order("created_at", { ascending: true }),
+    sbClient.from("articles").select("*").order("label", { ascending: true }),
+    sbClient.from("quotes").select("*").order("created_at", { ascending: true }),
+  ]);
+  if (c.error) throw c.error;
+  if (e.error) throw e.error;
+  if (i.error) throw i.error;
+  if (a.error) throw a.error;
+  if (q.error) throw q.error;
+  return {
+    clients: (c.data || []).map(dbClientToApp),
+    equipment: (e.data || []).map(dbEquipmentToApp),
+    interventions: (i.data || []).map(dbInterventionToApp),
+    articles: (a.data || []).map(dbArticleToApp),
+    quotes: (q.data || []).map(dbQuoteToApp),
+  };
+}
+
+function App() {
+  const [clients, setClients] = useState(null);
+  const [equipment, setEquipment] = useState(null);
+  const [interventions, setInterventions] = useState(null);
+  const [articles, setArticles] = useState(null);
+  const [quotes, setQuotes] = useState(null);
+  const [day, setDay] = useState(isoDate(new Date()));
+  const [screen, setScreen] = useState({ name: "list" });
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await loadAll();
+        setClients(data.clients);
+        setEquipment(data.equipment);
+        setInterventions(data.interventions);
+        setArticles(data.articles);
+        setQuotes(data.quotes);
+      } catch (e) {
+        setSaveError("Impossible de charger les données : " + (e.message || String(e)));
+        setClients([]); setEquipment([]); setInterventions([]); setArticles([]); setQuotes([]);
+      }
+    })();
+  }, []);
+
+  function flash() { setSaveError(null); setSaved(true); setTimeout(() => setSaved(false), 1200); }
+  function fail(e) { console.error(e); setSaveError((e && e.message) || "Échec de l'enregistrement"); }
+
+  if (clients === null || equipment === null || interventions === null || articles === null || quotes === null) {
+    return <div className="h-screen flex items-center justify-center bg-white text-slate-400">Chargement…</div>;
+  }
+
+  const dayItems = interventions.filter((it) => it.date === day).slice().sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+
+  // ---- clients ----
+  async function addClient(vals) {
+    try {
+      const { data, error } = await sbClient.from("clients").insert({ ...clientValsToPatch(vals), sites: [] }).select();
+      if (error) throw error;
+      const created = dbClientToApp(data[0]);
+      setClients((prev) => [...prev, created]);
+      flash();
+      return created;
+    } catch (e) { fail(e); return null; }
+  }
+  async function deleteClient(id) {
+    try {
+      const { error } = await sbClient.from("clients").delete().eq("id", id);
+      if (error) throw error;
+      setClients((prev) => prev.filter((c) => c.id !== id));
+      setEquipment((prev) => prev.filter((e) => e.clientId !== id));
+      flash();
+    } catch (e) { fail(e); }
+  }
+  async function patchClient(clientId, patch) {
+    try {
+      const { data, error } = await sbClient.from("clients").update(patch).eq("id", clientId).select();
+      if (error) throw error;
+      const updated = dbClientToApp(data[0]);
+      setClients((prev) => prev.map((c) => (c.id === clientId ? updated : c)));
+      flash();
+    } catch (e) { fail(e); }
+  }
+  function addSite(clientId, siteName) {
+    const c = clients.find((c) => c.id === clientId);
+    if (!c) return;
+    patchClient(clientId, { sites: [...c.sites, siteName] });
+  }
+  function deleteSite(clientId, siteName) {
+    const c = clients.find((c) => c.id === clientId);
+    if (!c) return;
+    patchClient(clientId, { sites: c.sites.filter((s) => s !== siteName) });
+  }
+
+  // ---- equipment ----
+  async function addEquipment(clientId, code, label, model, serial) {
+    try {
+      const { data, error } = await sbClient.from("equipment").insert({ client_id: clientId, code, label, model, serial }).select();
+      if (error) throw error;
+      const created = dbEquipmentToApp(data[0]);
+      setEquipment((prev) => [...prev, created]);
+      flash();
+      return created;
+    } catch (e) { fail(e); return null; }
+  }
+  async function deleteEquipment(equipId) {
+    try {
+      const { error } = await sbClient.from("equipment").delete().eq("id", equipId);
+      if (error) throw error;
+      setEquipment((prev) => prev.filter((e) => e.id !== equipId));
+      flash();
+    } catch (e) { fail(e); }
+  }
+
+  // ---- interventions ----
+  async function saveIntervention(item) {
+    try {
+      const body = {
+        client: item.client, client_id: item.clientId || null, site: item.site,
+        equipment: item.equipment, equipment_id: item.equipmentId || null,
+        type: item.type, description: item.description, flags: item.flags,
+        date: item.date, time: item.time, status: item.status || "attente",
+        report: item.report || "", technician: item.technician || "Moi",
+      };
+      const isExisting = interventions.some((p) => p.id === item.id);
+      if (isExisting) {
+        const { data, error } = await sbClient.from("interventions").update(body).eq("id", item.id).select();
+        if (error) throw error;
+        const updated = dbInterventionToApp(data[0]);
+        setInterventions((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        flash();
+        return updated;
+      } else {
+        const { data, error } = await sbClient.from("interventions").insert(body).select();
+        if (error) throw error;
+        const created = dbInterventionToApp(data[0]);
+        setInterventions((prev) => [...prev, created]);
+        flash();
+        return created;
+      }
+    } catch (e) { fail(e); return null; }
+  }
+  async function deleteIntervention(id) {
+    try {
+      const { error } = await sbClient.from("interventions").delete().eq("id", id);
+      if (error) throw error;
+      setInterventions((prev) => prev.filter((p) => p.id !== id));
+      flash();
+    } catch (e) { fail(e); }
+  }
+  async function setInterventionStatus(id, status, report) {
+    try {
+      const patch = { status };
+      if (typeof report === "string") patch.report = report;
+      const { data, error } = await sbClient.from("interventions").update(patch).eq("id", id).select();
+      if (error) throw error;
+      const updated = dbInterventionToApp(data[0]);
+      setInterventions((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      flash();
+      return updated;
+    } catch (e) { fail(e); return null; }
+  }
+
+  // ---- articles ----
+  async function addArticle(vals) {
+    try {
+      const { data, error } = await sbClient.from("articles").insert({
+        reference: (vals.reference || "").trim(),
+        label: (vals.label || "").trim(),
+        purchase_price: parseFloat(vals.purchasePrice) || 0,
+        sale_price: parseFloat(vals.salePrice) || 0,
+        supplier: (vals.supplier || "").trim(),
+        tva_rate: vals.tvaRate === "" || vals.tvaRate == null ? 20 : parseFloat(vals.tvaRate),
+      }).select();
+      if (error) throw error;
+      const created = dbArticleToApp(data[0]);
+      setArticles((prev) => [...prev, created].sort((a, b) => a.label.localeCompare(b.label)));
+      flash();
+      return created;
+    } catch (e) { fail(e); return null; }
+  }
+  async function patchArticle(id, vals) {
+    try {
+      const { data, error } = await sbClient.from("articles").update({
+        reference: (vals.reference || "").trim(),
+        label: (vals.label || "").trim(),
+        purchase_price: parseFloat(vals.purchasePrice) || 0,
+        sale_price: parseFloat(vals.salePrice) || 0,
+        supplier: (vals.supplier || "").trim(),
+        tva_rate: vals.tvaRate === "" || vals.tvaRate == null ? 20 : parseFloat(vals.tvaRate),
+      }).eq("id", id).select();
+      if (error) throw error;
+      const updated = dbArticleToApp(data[0]);
+      setArticles((prev) => prev.map((a) => (a.id === id ? updated : a)).sort((a, b) => a.label.localeCompare(b.label)));
+      flash();
+    } catch (e) { fail(e); }
+  }
+  async function deleteArticle(id) {
+    try {
+      const { error } = await sbClient.from("articles").delete().eq("id", id);
+      if (error) throw error;
+      setArticles((prev) => prev.filter((a) => a.id !== id));
+      flash();
+    } catch (e) { fail(e); }
+  }
+
+  // ---- quotes ----
+  async function getOrCreateQuote(intervention) {
+    const existing = quotes.find((q) => q.interventionId === intervention.id);
+    if (existing) return existing;
+    try {
+      const { data, error } = await sbClient.from("quotes").insert({
+        client_id: intervention.clientId, equipment_id: intervention.equipmentId,
+        intervention_id: intervention.id, items: [], status: "brouillon",
+      }).select();
+      if (error) throw error;
+      const created = dbQuoteToApp(data[0]);
+      setQuotes((prev) => [...prev, created]);
+      return created;
+    } catch (e) { fail(e); return null; }
+  }
+  async function updateQuote(quoteId, patch) {
+    try {
+      const dbPatch = { updated_at: new Date().toISOString() };
+      if (patch.items) dbPatch.items = patch.items;
+      if (patch.status) dbPatch.status = patch.status;
+      const { data, error } = await sbClient.from("quotes").update(dbPatch).eq("id", quoteId).select();
+      if (error) throw error;
+      const updated = dbQuoteToApp(data[0]);
+      setQuotes((prev) => prev.map((q) => (q.id === quoteId ? updated : q)));
+      flash();
+      return updated;
+    } catch (e) { fail(e); return null; }
+  }
+
+  function openDate(iso) { setDay(iso); }
+
+  return (
+    <div className="h-screen w-full flex flex-col bg-white overflow-hidden select-none" style={{ fontFamily: "Inter, sans-serif" }}>
+      {saveError && (
+        <div className="bg-red-600 text-white text-[12px] px-3 py-1.5 shrink-0 flex items-center justify-between gap-2">
+          <span className="truncate">⚠ {saveError}</span>
+          <button onClick={() => setSaveError(null)} className="shrink-0 font-bold">✕</button>
+        </div>
+      )}
+      {saved && !saveError && (
+        <div className="bg-emerald-600 text-white text-[12px] px-3 py-1 shrink-0 text-center">✓ Enregistré</div>
+      )}
+
+      {screen.name === "list" && (
+        <ListScreen
+          day={day} setDay={openDate} items={dayItems}
+          onNew={() => setScreen({ name: "form", item: null })}
+          onOpen={(item) => setScreen({ name: "detail", item })}
+          onNavClients={() => setScreen({ name: "clients" })}
+          onNavArticles={() => setScreen({ name: "articles" })}
+          onNavBackup={() => setScreen({ name: "backup" })}
+        />
+      )}
+
+      {screen.name === "articles" && (
+        <ArticlesScreen
+          articles={articles}
+          onBack={() => setScreen({ name: "list" })}
+          onAdd={async (vals) => { await addArticle(vals); }}
+          onEdit={async (id, vals) => { await patchArticle(id, vals); }}
+          onDelete={async (id) => { if (window.confirm("Supprimer définitivement cet article ?")) await deleteArticle(id); }}
+        />
+      )}
+
+      {screen.name === "clients" && (
+        <ClientsScreen
+          clients={clients}
+          onBack={() => setScreen({ name: "list" })}
+          onOpenClient={(c) => setScreen({ name: "client-detail", clientId: c.id })}
+          onAddNew={() => setScreen({ name: "client-add-standalone" })}
+          onDelete={async (id) => { if (window.confirm("Supprimer définitivement ce client ? Son matériel sera aussi supprimé ; ses interventions passées seront conservées mais détachées du client.")) await deleteClient(id); }}
+        />
+      )}
+
+      {screen.name === "client-add-standalone" && (
+        <AddScreen
+          title="Nouveau client"
+          fields={CLIENT_FIELDS}
+          onCancel={() => setScreen({ name: "clients" })}
+          onSave={async (vals) => {
+            if (!vals.name.trim()) return;
+            const c = await addClient(vals);
+            if (c) setScreen({ name: "client-detail", clientId: c.id });
+            else setScreen({ name: "clients" });
+          }}
+        />
+      )}
+
+      {screen.name === "client-edit" && (
+        <AddScreen
+          title="Modifier le client"
+          saveLabel="Enregistrer"
+          fields={CLIENT_FIELDS}
+          initial={clients.find((c) => c.id === screen.clientId)}
+          onCancel={() => setScreen({ name: "client-detail", clientId: screen.clientId })}
+          onSave={async (vals) => {
+            if (!vals.name.trim()) return;
+            await patchClient(screen.clientId, clientValsToPatch(vals));
+            setScreen({ name: "client-detail", clientId: screen.clientId });
+          }}
+        />
+      )}
+
+      {screen.name === "client-detail" && (
+        <ClientDetailScreen
+          client={clients.find((c) => c.id === screen.clientId)}
+          equipmentList={equipment.filter((e) => e.clientId === screen.clientId)}
+          interventionsList={interventions.filter((it) => it.clientId === screen.clientId)}
+          quotes={quotes}
+          onBack={() => setScreen({ name: "clients" })}
+          onEdit={() => setScreen({ name: "client-edit", clientId: screen.clientId })}
+          onOpenEquipment={(eq) => setScreen({ name: "equipment-history", equipmentId: eq.id, back: { name: "client-detail", clientId: screen.clientId } })}
+          onOpenIntervention={(it) => setScreen({ name: "detail", item: it, back: { name: "client-detail", clientId: screen.clientId } })}
+        />
+      )}
+
+      {screen.name === "equipment-history" && (
+        <EquipmentHistoryScreen
+          eq={equipment.find((e) => e.id === screen.equipmentId)}
+          interventionsList={interventions.filter((it) => it.equipmentId === screen.equipmentId && it.status === "cloture")}
+          onBack={() => setScreen(screen.back || { name: "list" })}
+        />
+      )}
+
+      {screen.name === "detail" && (
+        <InterventionDetailScreen
+          item={screen.item}
+          client={clients.find((c) => c.id === screen.item.clientId) || clients.find((c) => c.name === screen.item.client)}
+          hasQuote={quotes.some((q) => q.interventionId === screen.item.id)}
+          onBack={() => setScreen(screen.back || { name: "list" })}
+          onEdit={() => setScreen({ name: "form", item: screen.item, back: screen.back })}
+          onDelete={async (id) => { if (window.confirm("Supprimer définitivement cette intervention ?")) { await deleteIntervention(id); setScreen(screen.back || { name: "list" }); } }}
+          onDevis={async (id) => {
+            const u = await setInterventionStatus(id, "devis");
+            if (u) { const q = await getOrCreateQuote(u); setScreen({ name: "quote", quoteId: q ? q.id : null, item: u, back: screen.back }); }
+          }}
+          onOpenQuote={async () => { const q = await getOrCreateQuote(screen.item); if (q) setScreen({ name: "quote", quoteId: q.id, item: screen.item, back: screen.back }); }}
+          onUndoDevis={async (id) => { const u = await setInterventionStatus(id, "attente"); if (u) setScreen({ name: "detail", item: u, back: screen.back }); }}
+          onReopen={async (id) => { const u = await setInterventionStatus(id, "attente"); if (u) setScreen({ name: "detail", item: u, back: screen.back }); }}
+          onClose={() => setScreen({ name: "closure", item: screen.item, back: screen.back })}
+        />
+      )}
+
+      {screen.name === "quote" && (
+        <QuoteScreen
+          quote={quotes.find((q) => q.id === screen.quoteId)}
+          item={screen.item}
+          client={clients.find((c) => c.id === screen.item.clientId) || clients.find((c) => c.name === screen.item.client)}
+          articles={articles}
+          onUpdateItems={(items) => updateQuote(screen.quoteId, { items })}
+          onSetStatus={(status) => updateQuote(screen.quoteId, { status })}
+          onBack={() => setScreen({ name: "detail", item: screen.item, back: screen.back })}
+        />
+      )}
+
+      {screen.name === "closure" && (
+        <ClosureScreen
+          item={screen.item}
+          onCancel={() => setScreen({ name: "detail", item: screen.item, back: screen.back })}
+          onSave={async (reportText) => {
+            await setInterventionStatus(screen.item.id, "cloture", reportText);
+            setScreen(screen.back || { name: "list" });
+          }}
+        />
+      )}
+
+      {screen.name === "form" && (
+        <FormScreen
+          initial={screen.item}
+          defaultDate={day}
+          clients={clients}
+          equipment={equipment}
+          addClient={addClient}
+          deleteClient={deleteClient}
+          addSite={addSite}
+          deleteSite={deleteSite}
+          addEquipment={addEquipment}
+          deleteEquipment={deleteEquipment}
+          onCancel={() => setScreen(screen.back || { name: "list" })}
+          onSave={async (item) => { await saveIntervention(item); setScreen(screen.back || { name: "list" }); }}
+          onDelete={async (id) => { if (window.confirm("Supprimer définitivement cette intervention ?")) { await deleteIntervention(id); setScreen(screen.back || { name: "list" }); } }}
+        />
+      )}
+
+      {screen.name === "backup" && (
+        <BackupScreen
+          clients={clients} equipment={equipment} interventions={interventions}
+          onBack={() => setScreen({ name: "list" })}
+        />
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ LIST (jour)
+function ListScreen({ day, setDay, items, onNew, onOpen, onNavClients, onNavArticles, onNavBackup }) {
+  return (
+    <>
+      <div className="flex items-center gap-3 px-3 py-3 text-white shrink-0" style={{ background: HEADER_DARK }}>
+        <div className="w-6 h-6 rounded-full bg-blue-500 shrink-0" />
+        <span className="font-bold text-[17px] flex-1 truncate">C.H.R 26</span>
+        <span className="text-lg">↻</span>
+      </div>
+      <div className="flex items-center gap-3 px-3 py-2 text-white shrink-0" style={{ background: TOOLBAR_GREY }}>
+        <span className="text-lg">🗺</span>
+        <button onClick={onNavClients} className="text-lg">👥</button>
+        <button onClick={() => setDay(addDays(day, -1))}><span className="text-xl">‹</span></button>
+        <div className="relative flex-1 text-center bg-white/10 border border-white/40 rounded px-3 py-1 text-[15px] font-medium" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+          {frDate(day)}
+          <input type="date" value={day} onChange={(e) => e.target.value && setDay(e.target.value)}
+            className="absolute inset-0 w-full h-full opacity-0" style={{ colorScheme: "light" }} />
+        </div>
+        <button onClick={() => setDay(addDays(day, 1))}><span className="text-xl">›</span></button>
+        <button onClick={onNew}><span className="text-2xl leading-none">+</span></button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {items.length === 0 && (
+          <div className="text-center text-slate-400 text-sm mt-10 px-6">
+            Aucune intervention ce jour. Touchez <span className="font-semibold">+</span> pour en créer une.
+          </div>
+        )}
+        {items.map((it) => (
+          <button key={it.id} onClick={() => onOpen(it)} className="w-full flex items-stretch border-b border-slate-200 active:bg-slate-50 text-left">
+            <div className="w-1.5 shrink-0" style={{ background: TYPE_COLORS[it.type] || "#999" }} />
+            <div className="flex-1 px-3 py-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[17px] text-slate-900 leading-tight">{it.type}</span>
+                <span className="text-[11px] px-1.5 py-0.5 rounded-full text-white" style={{ background: STATUS_INFO[it.status].color }}>{STATUS_INFO[it.status].label}</span>
+              </div>
+              <div className="text-[15px] text-slate-700 leading-tight mt-0.5">{it.client}</div>
+              {it.site && <div className="text-[15px] text-slate-700 leading-tight">{it.site}</div>}
+              {it.equipment && <div className="text-[13px] text-slate-500 leading-tight mt-0.5">{it.equipment}</div>}
+              <div className="text-[13px] text-slate-500 mt-1">{it.time ? `Heure : ${it.time}` : ""}</div>
+              {it.flags && it.flags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {it.flags.map((f) => <span key={f} className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">{f}</span>)}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center pr-3 text-slate-300">›</div>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-stretch border-t border-slate-200 bg-white shrink-0" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="flex-1 flex flex-col items-center gap-0.5 py-2">
+          <span style={{ color: BLUE }}>🏠</span>
+          <span className="text-[11px] font-medium" style={{ color: BLUE }}>Interventions</span>
+        </div>
+        <button onClick={onNavClients} className="flex-1 flex flex-col items-center gap-0.5 py-2">
+          <span style={{ color: "#333" }}>👥</span>
+          <span className="text-[11px] font-medium" style={{ color: "#333" }}>Clients</span>
+        </button>
+        <button onClick={onNavArticles} className="flex-1 flex flex-col items-center gap-0.5 py-2">
+          <span style={{ color: "#333" }}>📦</span>
+          <span className="text-[11px] font-medium" style={{ color: "#333" }}>Articles</span>
+        </button>
+        <button onClick={onNavBackup} className="flex-1 flex flex-col items-center gap-0.5 py-2">
+          <span style={{ color: "#333" }}>•••</span>
+          <span className="text-[11px] font-medium" style={{ color: "#333" }}>Plus</span>
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ------------------------------------------------------------------ SWIPE ROW
+function SwipeRow({ onDelete, children, onClick }) {
+  const [tx, setTx] = useState(0);
+  const drag = useRef(null);
+  const openRef = useRef(false);
+
+  function start(x, y) { drag.current = { x, y, tx0: tx, horiz: null }; }
+  function move(x, y) {
+    const d = drag.current;
+    if (!d) return false;
+    const dx = x - d.x, dy = y - d.y;
+    if (d.horiz === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) d.horiz = Math.abs(dx) > Math.abs(dy);
+    if (d.horiz) {
+      let next = d.tx0 + dx;
+      next = Math.max(-84, Math.min(0, next));
+      setTx(next);
+      return true;
+    }
+    return false;
+  }
+  function end() {
+    const d = drag.current;
+    if (d && d.horiz) {
+      const willOpen = tx < -40;
+      setTx(willOpen ? -84 : 0);
+      openRef.current = willOpen;
+    }
+    drag.current = null;
+  }
+  function handleClick() {
+    if (openRef.current) { setTx(0); openRef.current = false; return; }
+    onClick && onClick();
+  }
+
+  return (
+    <div className="relative overflow-hidden border-b border-slate-200">
+      {onDelete && (
+        <div className="absolute inset-y-0 right-0 w-[84px] flex items-center justify-center" style={{ background: RED }} onClick={() => { onDelete(); setTx(0); openRef.current = false; }}>
+          <span className="text-white text-lg">🗑</span>
+        </div>
+      )}
+      <div
+        className="bg-white"
+        style={{ transform: `translateX(${tx}px)`, transition: drag.current ? "none" : "transform 0.18s", touchAction: "pan-y" }}
+        onTouchStart={(e) => start(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchMove={(e) => { if (move(e.touches[0].clientX, e.touches[0].clientY) && e.cancelable) e.preventDefault(); }}
+        onTouchEnd={end}
+        onMouseDown={(e) => start(e.clientX, e.clientY)}
+        onMouseMove={(e) => { if (e.buttons === 1) move(e.clientX, e.clientY); }}
+        onMouseUp={end}
+        onMouseLeave={() => drag.current && end()}
+        onClick={handleClick}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ScreenHeader({ title, onBack, backLabel, right }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0 relative" style={{ background: HEADER_DARK }}>
+      {onBack && <button onClick={onBack} className="flex items-center gap-1"><span className="text-xl">‹</span><span className="text-[15px]">{backLabel || "Retour"}</span></button>}
+      <span className="font-bold text-[17px] flex-1 text-center" style={{ marginRight: onBack ? 56 : 0 }}>{title}</span>
+      {right && <div className="absolute right-3 top-1/2 -translate-y-1/2">{right}</div>}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ CLIENTS (liste + historique)
+function ClientsScreen({ clients, onBack, onOpenClient, onAddNew, onDelete }) {
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title="Clients" onBack={onBack} backLabel="Interventions"
+        right={<button onClick={onAddNew} className="text-2xl leading-none">+</button>} />
+      <div className="px-3 py-2 text-[12px] text-slate-400 bg-white border-b border-slate-100">Glissez une fiche vers la gauche pour la supprimer</div>
+      <div className="flex-1 overflow-y-auto bg-white">
+        {clients.length === 0 && <div className="text-center text-slate-400 text-sm mt-10 px-6">Aucun client pour l'instant.</div>}
+        {clients.map((c) => (
+          <SwipeRow key={c.id} onDelete={() => onDelete(c.id)} onClick={() => onOpenClient(c)}>
+            <div className="w-full flex items-center justify-between px-3 py-3">
+              <div className="min-w-0">
+                <div className="text-[15px] text-slate-800 truncate">{c.name}</div>
+                {(c.address || c.phone) && <div className="text-[12px] text-slate-400 truncate">{[c.address, c.phone].filter(Boolean).join(" · ")}</div>}
+              </div>
+              <span className="text-slate-300">›</span>
+            </div>
+          </SwipeRow>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function statusBadge(status) {
+  const s = STATUS_INFO[status] || STATUS_INFO.attente;
+  return <span className="text-[11px] px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: s.color }}>{s.label}</span>;
+}
+
+function ClientDetailScreen({ client, equipmentList, interventionsList, quotes, onBack, onEdit, onOpenEquipment, onOpenIntervention }) {
+  if (!client) return <div className="p-6 text-slate-400">Client introuvable.</div>;
+  const sorted = interventionsList.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.time || "").localeCompare(a.time || ""));
+  function quoteFor(it) { return (quotes || []).find((q) => q.interventionId === it.id); }
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title={client.name} onBack={onBack} backLabel="Clients"
+        right={<button onClick={onEdit} className="text-[14px] font-medium underline">Modifier</button>} />
+      <div className="flex-1 overflow-y-auto bg-slate-100">
+        <div className="bg-white p-3 space-y-0.5">
+          {client.contactName && <div className="text-[13px] text-slate-600">Contact : {client.contactName}</div>}
+          {(client.address || client.postalCode || client.city) && (
+            <div className="text-[13px] text-slate-600">{[client.address, [client.postalCode, client.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}</div>
+          )}
+          {client.phone && <div className="text-[13px] text-slate-600">☎ {client.phone}</div>}
+          {client.email && <div className="text-[13px] text-slate-600">{client.email}</div>}
+          {client.siret && <div className="text-[12px] text-slate-400">SIRET : {client.siret}</div>}
+          {client.notes && <div className="text-[13px] text-slate-500 mt-1 whitespace-pre-wrap">{client.notes}</div>}
+        </div>
+
+        <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Matériel ({equipmentList.length})</div>
+        <div className="bg-white">
+          {equipmentList.length === 0 && <div className="px-3 py-3 text-[13px] text-slate-400">Aucun matériel référencé pour ce client.</div>}
+          {equipmentList.map((eq) => (
+            <button key={eq.id} onClick={() => onOpenEquipment(eq)} className="w-full flex items-center justify-between px-3 py-3 border-b border-slate-200 active:bg-slate-50 text-left">
+              <div className="min-w-0">
+                <div className="text-[15px] text-slate-800 truncate">{eq.label}{eq.model ? ` (${eq.model})` : ""}</div>
+                <div className="text-[12px] text-slate-400 truncate">{[eq.code && `Réf ${eq.code}`, eq.serial && `N° série ${eq.serial}`].filter(Boolean).join(" · ")}</div>
+              </div>
+              <span className="text-slate-300">›</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Historique des interventions ({sorted.length})</div>
+        <div className="bg-white pb-6">
+          {sorted.length === 0 && <div className="px-3 py-3 text-[13px] text-slate-400">Aucune intervention enregistrée.</div>}
+          {sorted.map((it) => {
+            const q = quoteFor(it);
+            const qTotal = q ? (q.items || []).reduce((s, li) => s + li.quantity * li.unitPrice, 0) : null;
+            return (
+              <button key={it.id} onClick={() => onOpenIntervention(it)} className="w-full text-left px-3 py-3 border-b border-slate-200 active:bg-slate-50">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[14px] font-medium text-slate-800">{it.type}</span>
+                  {statusBadge(it.status)}
+                </div>
+                <div className="text-[12px] text-slate-500 mt-0.5" style={{ fontFamily: "JetBrains Mono, monospace" }}>{frDate(it.date)} {it.time}</div>
+                {it.equipment && <div className="text-[12px] text-slate-500">{it.equipment}</div>}
+                {it.status === "cloture" && it.report && (
+                  <div className="text-[12px] text-slate-400 mt-1 line-clamp-2">{it.report.slice(0, 140)}{it.report.length > 140 ? "…" : ""}</div>
+                )}
+                {q && (
+                  <div className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 inline-block mt-1">🧾 Devis {money(qTotal)}</div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EquipmentHistoryScreen({ eq, interventionsList, onBack }) {
+  if (!eq) return <div className="p-6 text-slate-400">Matériel introuvable.</div>;
+  const sorted = interventionsList.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.time || "").localeCompare(a.time || ""));
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title={eq.label || "Matériel"} onBack={onBack} />
+      <div className="flex-1 overflow-y-auto bg-slate-100">
+        <div className="bg-white p-3 space-y-0.5">
+          {eq.model && <div className="text-[13px] text-slate-600">Modèle : {eq.model}</div>}
+          {eq.serial && <div className="text-[13px] text-slate-600">N° de série : {eq.serial}</div>}
+          {eq.code && <div className="text-[13px] text-slate-600">Réf. : {eq.code}</div>}
+        </div>
+        <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Historique des interventions clôturées ({sorted.length})</div>
+        <div className="bg-white pb-6">
+          {sorted.length === 0 && <div className="px-3 py-3 text-[13px] text-slate-400">Aucune intervention clôturée pour ce matériel.</div>}
+          {sorted.map((it) => (
+            <div key={it.id} className="px-3 py-3 border-b border-slate-200">
+              <div className="flex items-center justify-between">
+                <span className="text-[14px] font-medium text-slate-800">{it.type}</span>
+                <span className="text-[12px] text-slate-500" style={{ fontFamily: "JetBrains Mono, monospace" }}>{frDate(it.date)} {it.time}</span>
+              </div>
+              <div className="text-[12px] text-slate-400 mt-0.5">Technicien : {it.technician}</div>
+              {it.report && <div className="text-[13px] text-slate-700 mt-1 whitespace-pre-wrap">{it.report}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ DETAIL D'INTERVENTION (actions)
+function mapsLink(client) {
+  if (!client) return null;
+  const parts = [client.address, client.postalCode, client.city].filter(Boolean);
+  if (parts.length === 0) return null;
+  const q = encodeURIComponent(parts.join(", "));
+  return `https://waze.com/ul?q=${q}&navigate=yes`;
+}
+
+function InterventionDetailScreen({ item, client, hasQuote, onBack, onEdit, onDelete, onDevis, onOpenQuote, onUndoDevis, onReopen, onClose }) {
+  const link = mapsLink(client);
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title="Intervention" onBack={onBack} />
+      <div className="flex-1 overflow-y-auto bg-slate-100">
+        <div className="bg-white mt-2 p-3 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[16px] font-semibold text-slate-800">{item.type}</span>
+            {statusBadge(item.status)}
+          </div>
+          <div className="text-[14px] text-slate-700">{item.client}</div>
+          {item.site && <div className="text-[14px] text-slate-700">{item.site}</div>}
+          {link ? (
+            <a href={link} className="text-[13px] block" style={{ color: BLUE }}>
+              📍 {[client.address, client.postalCode, client.city].filter(Boolean).join(", ")}
+            </a>
+          ) : (
+            client && client.address && <div className="text-[13px] text-slate-500">{client.address}</div>
+          )}
+          {client && client.phone && (
+            <a href={`tel:${client.phone.replace(/\s+/g, "")}`} className="text-[13px] block" style={{ color: BLUE }}>☎ {client.phone}</a>
+          )}
+          {item.equipment && <div className="text-[13px] text-slate-500">{item.equipment}</div>}
+          {item.description && <div className="text-[13px] text-slate-500">{item.description}</div>}
+          <div className="text-[13px] text-slate-500" style={{ fontFamily: "JetBrains Mono, monospace" }}>{frDate(item.date)} {item.time}</div>
+          {item.flags && item.flags.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {item.flags.map((f) => <span key={f} className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">{f}</span>)}
+            </div>
+          )}
+        </div>
+
+        {item.status === "cloture" && item.report && (
+          <div className="bg-white mt-3 p-3">
+            <div className="text-[11px] uppercase tracking-wider text-slate-500 font-medium mb-1">Compte-rendu</div>
+            <div className="text-[14px] text-slate-700 whitespace-pre-wrap">{item.report}</div>
+          </div>
+        )}
+
+        {hasQuote && (
+          <div className="p-3 pt-3">
+            <button onClick={onOpenQuote} className="w-full py-2.5 rounded-md border font-medium text-[15px] bg-white" style={{ borderColor: AMBER, color: AMBER }}>🧾 Voir le devis</button>
+          </div>
+        )}
+
+        <div className="p-3 space-y-2 mt-2">
+          <button onClick={onEdit} className="w-full py-2.5 rounded-md border border-slate-300 text-slate-700 font-medium text-[15px] bg-white">Modifier les informations</button>
+
+          {item.status === "attente" && (
+            <button onClick={() => onDevis(item.id)} className="w-full py-2.5 rounded-md text-white font-medium text-[15px]" style={{ background: AMBER }}>Devis à suivre</button>
+          )}
+          {item.status === "devis" && (
+            <button onClick={() => onUndoDevis(item.id)} className="w-full py-2.5 rounded-md border font-medium text-[15px] bg-white" style={{ borderColor: AMBER, color: AMBER }}>✕ Retirer "Devis à suivre"</button>
+          )}
+          {item.status === "cloture" && (
+            <button onClick={() => onReopen(item.id)} className="w-full py-2.5 rounded-md border border-slate-300 text-slate-700 font-medium text-[15px] bg-white">Rouvrir l'intervention</button>
+          )}
+
+          {item.status !== "cloture" && (
+            <button onClick={onClose} className="w-full py-2.5 rounded-md text-white font-medium text-[15px]" style={{ background: GREEN }}>Clôturé</button>
+          )}
+          {item.status === "cloture" && (
+            <button onClick={onClose} className="w-full py-2.5 rounded-md text-white font-medium text-[15px]" style={{ background: GREEN }}>Modifier le compte-rendu</button>
+          )}
+
+          <button onClick={() => onDelete(item.id)} className="w-full py-2.5 rounded-md text-white font-medium text-[15px]" style={{ background: RED }}>Supprimer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClosureScreen({ item, onCancel, onSave }) {
+  const [text, setText] = useState(item.report || "");
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title="Clôturer l'intervention" />
+      <div className="flex items-center gap-3 px-3 py-2 shrink-0" style={{ background: TOOLBAR_GREY }}>
+        <button onClick={onCancel} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2" style={{ background: "#555f66" }}>Annuler</button>
+        <button onClick={() => text.trim() && onSave(text.trim())} disabled={!text.trim()} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2 disabled:opacity-50" style={{ background: GREEN }}>Enregistrer</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 bg-slate-100">
+        <div className="text-[12px] text-slate-500 mb-2">Compte-rendu détaillé — diagnostic, panne constatée, réparations effectuées, pièces remplacées, recommandations, observations…</div>
+        <textarea
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={14}
+          className="w-full bg-white border border-slate-200 rounded-md p-3 text-[14px] outline-none resize-none"
+          placeholder="Ex : Diagnostic — compresseur HS. Panne constatée — fuite gaz sur raccord. Réparation — remplacement raccord + recharge. Pièces — 1x raccord 3/8. Recommandation — contrôle dans 6 mois."
+        />
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ FORM (créer / modifier)
+function FormScreen({ initial, defaultDate, clients, equipment, addClient, deleteClient, addSite, deleteSite, addEquipment, deleteEquipment, onCancel, onSave, onDelete }) {
+  const [form, setForm] = useState(initial || {
+    id: String(Date.now()), clientId: "", client: "", site: "", equipmentId: "", equipment: "", type: "", description: "", flags: [], date: defaultDate, time: nowTime(), status: "attente", report: "", technician: "Moi",
+  });
+  const [picker, setPicker] = useState(null);
+
+  function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+  const valid = form.client && form.type;
+  const currentClient = clients.find((c) => c.id === form.clientId) || clients.find((c) => c.name === form.client);
+  const clientEquipment = currentClient ? equipment.filter((e) => e.clientId === currentClient.id) : [];
+
+  if (picker === "client") {
+    return (
+      <ClientPicker
+        clients={clients}
+        value={form.client}
+        onSelect={(c) => { set("clientId", c.id); set("client", c.name); set("site", ""); set("equipmentId", ""); set("equipment", ""); setPicker(null); }}
+        onDelete={deleteClient}
+        onAdd={() => setPicker("client-add")}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "client-add") {
+    return (
+      <AddScreen
+        title="Nouveau client"
+        fields={CLIENT_FIELDS}
+        onCancel={() => setPicker("client")}
+        onSave={async (vals) => {
+          if (!vals.name.trim()) return;
+          const c = await addClient(vals);
+          if (c) { set("clientId", c.id); set("client", c.name); set("site", ""); set("equipmentId", ""); set("equipment", ""); }
+          setPicker(null);
+        }}
+      />
+    );
+  }
+  if (picker === "site") {
+    const sites = currentClient ? currentClient.sites : [];
+    return (
+      <ListPicker
+        title="Site"
+        options={sites}
+        value={form.site}
+        onSelect={(v) => { set("site", v); setPicker(null); }}
+        onDelete={(v) => currentClient && deleteSite(currentClient.id, v)}
+        onAdd={currentClient ? () => setPicker("site-add") : null}
+        emptyMessage={currentClient ? "Aucun site. Touchez + pour en ajouter un." : "Choisissez d'abord un client."}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "site-add") {
+    return (
+      <AddScreen
+        title="Nouveau site"
+        fields={[{ key: "name", label: "Nom du site", placeholder: "Ex : Paris 15e" }]}
+        onCancel={() => setPicker("site")}
+        onSave={(vals) => {
+          if (!vals.name.trim() || !currentClient) return;
+          addSite(currentClient.id, vals.name.trim());
+          set("site", vals.name.trim());
+          setPicker(null);
+        }}
+      />
+    );
+  }
+  if (picker === "equipment") {
+    return (
+      <ListPicker
+        title="Equipement"
+        options={clientEquipment.map((e) => `${e.code ? e.code + " — " : ""}${e.label}${e.model ? " (" + e.model + ")" : ""}`)}
+        value={form.equipment}
+        onSelect={(v) => {
+          const idx = clientEquipment.findIndex((e) => `${e.code ? e.code + " — " : ""}${e.label}${e.model ? " (" + e.model + ")" : ""}` === v);
+          const eq = clientEquipment[idx];
+          set("equipment", v); set("equipmentId", eq ? eq.id : "");
+          setPicker(null);
+        }}
+        onDelete={(v) => {
+          const idx = clientEquipment.findIndex((e) => `${e.code ? e.code + " — " : ""}${e.label}${e.model ? " (" + e.model + ")" : ""}` === v);
+          const eq = clientEquipment[idx];
+          if (eq) deleteEquipment(eq.id);
+        }}
+        onAdd={currentClient ? () => setPicker("equipment-add") : null}
+        emptyMessage={currentClient ? "Aucun matériel référencé. Touchez + pour en ajouter un." : "Choisissez d'abord un client."}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "equipment-add") {
+    return (
+      <AddScreen
+        title="Nouveau matériel"
+        fields={[
+          { key: "code", label: "Code / Référence", placeholder: "Ex : 25732" },
+          { key: "label", label: "Désignation", placeholder: "Ex : Four Rational" },
+          { key: "model", label: "Modèle", placeholder: "Ex : SCC101" },
+          { key: "serial", label: "Numéro de série", placeholder: "Ex : RTL2026003912" },
+        ]}
+        onCancel={() => setPicker("equipment")}
+        onSave={async (vals) => {
+          if (!vals.code.trim() || !vals.label.trim() || !vals.model.trim() || !vals.serial.trim() || !currentClient) return;
+          const eq = await addEquipment(currentClient.id, vals.code.trim(), vals.label.trim(), vals.model.trim(), vals.serial.trim());
+          if (eq) {
+            set("equipment", `${eq.code} — ${eq.label} (${eq.model})`);
+            set("equipmentId", eq.id);
+          }
+          setPicker(null);
+        }}
+      />
+    );
+  }
+  if (picker === "type") {
+    return <ListPicker title="Type Int." options={INT_TYPES} value={form.type} onSelect={(v) => { set("type", v); setPicker(null); }} onBack={() => setPicker(null)} />;
+  }
+  if (picker === "flags") {
+    return (
+      <ListPicker
+        title="Drapeaux" options={FLAGS} multi value={form.flags}
+        onToggle={(v) => set("flags", form.flags.includes(v) ? form.flags.filter((f) => f !== v) : [...form.flags, v])}
+        onBack={() => setPicker(null)}
+      />
+    );
+  }
+  if (picker === "description") {
+    return (
+      <div className="flex flex-col h-full">
+        <ScreenHeader title="Description" />
+        <div className="flex items-center justify-end px-3 py-2 shrink-0" style={{ background: TOOLBAR_GREY }}>
+          <button onClick={() => setPicker(null)} className="text-white font-semibold text-[15px]">OK</button>
+        </div>
+        <textarea autoFocus value={form.description} onChange={(e) => set("description", e.target.value)} className="flex-1 p-3 text-[15px] outline-none resize-none" placeholder="Description de l'intervention…" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <ScreenHeader title={initial ? "Modifier l'intervention" : "Nouvelle intervention"} />
+      <div className="flex items-center gap-3 px-3 py-2 shrink-0" style={{ background: TOOLBAR_GREY }}>
+        <button onClick={onCancel} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2" style={{ background: "#555f66" }}>Annuler</button>
+        <button onClick={() => valid && onSave(form)} disabled={!valid} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2 disabled:opacity-50" style={{ background: GREEN }}>Valider</button>
+      </div>
+      <div className="flex-1 overflow-y-auto bg-slate-100">
+        <div className="bg-white mt-2">
+          <Row required label="Client" value={form.client} onClick={() => setPicker("client")} />
+          <Row label="Site" value={form.site} onClick={() => setPicker("site")} />
+          <Row label="Equipement" value={form.equipment} onClick={() => setPicker("equipment")} />
+          <Row required label="Type Int." value={form.type} onClick={() => setPicker("type")} />
+          <Row label="Description" value={form.description} onClick={() => setPicker("description")} last />
+        </div>
+        <div className="bg-white mt-4"><Row label="Drapeaux" value={form.flags.join(", ")} onClick={() => setPicker("flags")} last /></div>
+        <div className="bg-white mt-4">
+          <div className="flex items-center justify-between px-3 py-3 border-b border-slate-200">
+            <span className="text-[15px] text-slate-800">Date</span>
+            <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="text-[15px] text-right outline-none" />
+          </div>
+          <div className="flex items-center justify-between px-3 py-3">
+            <span className="text-[15px] text-slate-800">Heure</span>
+            <input type="time" value={form.time} onChange={(e) => set("time", e.target.value)} className="text-[15px] text-right outline-none" />
+          </div>
+        </div>
+        {initial && (
+          <button onClick={() => onDelete(form.id)} className="w-full flex items-center justify-center gap-2 text-red-600 font-medium text-[15px] py-3 mt-4 mb-6 bg-white">
+            🗑 Supprimer l'intervention
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+function Row({ label, value, onClick, required, last }) {
+  return (
+    <button onClick={onClick} className={`w-full flex items-center justify-between px-3 py-3 active:bg-slate-50 ${last ? "" : "border-b border-slate-200"}`}>
+      <span className="text-[15px] text-slate-800 shrink-0">{required && <span className="text-red-500">*</span>}{label}</span>
+      <span className="text-[15px] text-slate-400 truncate ml-3 flex items-center gap-1">
+        <span className="truncate max-w-[180px]">{value || ""}</span>
+        <span className="text-slate-300">›</span>
+      </span>
+    </button>
+  );
+}
+
+function ListPicker({ title, options, value, onSelect, onToggle, onBack, multi, onDelete, onAdd, emptyMessage }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0 relative" style={{ background: HEADER_DARK }}>
+        <button onClick={onBack} className="flex items-center gap-1"><span className="text-xl">‹</span><span className="text-[15px]">Retour</span></button>
+        <span className="font-bold text-[17px] flex-1 text-center pr-12">{title}</span>
+        {onAdd && <button onClick={onAdd} className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl leading-none">+</button>}
+      </div>
+      <div className="flex-1 overflow-y-auto bg-white relative">
+        {options.length === 0 && emptyMessage && <div className="text-center text-slate-400 text-sm mt-10 px-6">{emptyMessage}</div>}
+        {options.map((opt) => {
+          const selected = multi ? value.includes(opt) : value === opt;
+          const rowContent = (
+            <div className="w-full flex items-center justify-between px-3 py-3">
+              <span className="text-[15px] text-slate-800">{opt}</span>
+              {selected && <span style={{ color: BLUE }}>✓</span>}
+            </div>
+          );
+          if (onDelete) {
+            return <SwipeRow key={opt} onDelete={() => onDelete(opt)} onClick={() => (multi ? onToggle(opt) : onSelect(opt))}>{rowContent}</SwipeRow>;
+          }
+          return (
+            <button key={opt} onClick={() => (multi ? onToggle(opt) : onSelect(opt))} className="w-full border-b border-slate-200 active:bg-slate-50 text-left">
+              {rowContent}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ClientPicker({ clients, value, onSelect, onDelete, onAdd, onBack }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-3 py-3 text-white shrink-0 relative" style={{ background: HEADER_DARK }}>
+        <button onClick={onBack} className="flex items-center gap-1"><span className="text-xl">‹</span><span className="text-[15px]">Retour</span></button>
+        <span className="font-bold text-[17px] flex-1 text-center pr-12">Client</span>
+        <button onClick={onAdd} className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl leading-none">+</button>
+      </div>
+      <div className="px-3 py-2 text-[12px] text-slate-400 bg-white border-b border-slate-100">Glissez une fiche vers la gauche pour la supprimer</div>
+      <div className="flex-1 overflow-y-auto bg-white">
+        {clients.length === 0 && <div className="text-center text-slate-400 text-sm mt-10 px-6">Aucun client. Touchez + pour en ajouter un.</div>}
+        {clients.map((c) => (
+          <SwipeRow key={c.id} onDelete={() => onDelete(c.id)} onClick={() => onSelect(c)}>
+            <div className="w-full flex items-center justify-between px-3 py-3">
+              <div className="min-w-0">
+                <div className="text-[15px] text-slate-800 truncate">{c.name}</div>
+                {(c.address || c.phone) && <div className="text-[12px] text-slate-400 truncate">{[c.address, c.phone].filter(Boolean).join(" · ")}</div>}
+              </div>
+              {value === c.name && <span style={{ color: BLUE }} className="shrink-0 ml-2">✓</span>}
+            </div>
+          </SwipeRow>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AddScreen({ title, fields, initial, saveLabel, onCancel, onSave }) {
+  const [vals, setVals] = useState(() => Object.fromEntries(fields.map((f) => [f.key, (initial && initial[f.key]) || ""])));
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title={title} />
+      <div className="flex items-center gap-3 px-3 py-2 shrink-0" style={{ background: TOOLBAR_GREY }}>
+        <button onClick={onCancel} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2" style={{ background: "#555f66" }}>Annuler</button>
+        <button onClick={() => onSave(vals)} className="flex-1 text-white font-semibold text-[15px] rounded-md py-2" style={{ background: GREEN }}>{saveLabel || "Ajouter"}</button>
+      </div>
+      <div className="bg-slate-100 flex-1 p-3 space-y-3">
+        {fields.map((f) => (
+          <div key={f.key} className="bg-white rounded-md px-3 py-2">
+            <div className="text-[11px] text-slate-400">{f.label}</div>
+            <input
+              autoFocus={fields[0].key === f.key}
+              value={vals[f.key]}
+              onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))}
+              placeholder={f.placeholder}
+              className="w-full text-[15px] outline-none mt-0.5"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ BACKUP
+function BackupScreen({ clients, equipment, interventions, onBack }) {
+  const exportText = JSON.stringify({ clients, equipment, interventions }, null, 2);
+  const taRef = useRef(null);
+  useEffect(() => { if (taRef.current) { taRef.current.focus(); taRef.current.select(); } }, []);
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title="Sauvegarde" onBack={onBack} />
+      <div className="flex-1 overflow-y-auto bg-slate-100 p-3 space-y-4">
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-[13px] rounded-md p-3">
+          Tes données sont enregistrées dans une vraie base de données (Supabase). Cette page reste utile comme copie de secours.
+        </div>
+        <div>
+          <div className="text-[13px] font-semibold text-slate-600 mb-1">Exporter (lecture seule)</div>
+          <textarea ref={taRef} readOnly value={exportText} className="w-full h-64 bg-white border border-slate-200 rounded-md p-2 text-[11px]" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ ARTICLES (catalogue pièces)
+const ARTICLE_FIELDS = [
+  { key: "reference", label: "Référence", placeholder: "Ex : RAT-25732" },
+  { key: "label", label: "Désignation", placeholder: "Ex : Sonde de température" },
+  { key: "purchasePrice", label: "Prix d'achat (€)", placeholder: "Ex : 12.50" },
+  { key: "salePrice", label: "Prix de vente (€)", placeholder: "Ex : 24.90" },
+  { key: "tvaRate", label: "TVA (%)", placeholder: "Ex : 20" },
+  { key: "supplier", label: "Fournisseur (optionnel)", placeholder: "" },
+];
+
+function money(n) { return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2).replace(".", ",") + " €"; }
+
+function ArticlesScreen({ articles, onBack, onAdd, onEdit, onDelete }) {
+  const [search, setSearch] = useState("");
+  const [modal, setModal] = useState(null); // null | "add" | {article}
+
+  const filtered = articles.filter((a) => {
+    if (!search.trim()) return true;
+    const s = search.toLowerCase();
+    return a.label.toLowerCase().includes(s) || a.reference.toLowerCase().includes(s);
+  });
+
+  if (modal === "add" || (modal && modal.article)) {
+    const editing = modal && modal.article;
+    return (
+      <AddScreen
+        title={editing ? "Modifier l'article" : "Nouvel article"}
+        saveLabel={editing ? "Enregistrer" : "Ajouter"}
+        fields={ARTICLE_FIELDS}
+        initial={editing || null}
+        onCancel={() => setModal(null)}
+        onSave={async (vals) => {
+          if (!vals.label.trim()) return;
+          if (editing) await onEdit(editing.id, vals); else await onAdd(vals);
+          setModal(null);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title="Articles" onBack={onBack} backLabel="Interventions"
+        right={<button onClick={() => setModal("add")} className="text-2xl leading-none">+</button>} />
+      <div className="p-3 bg-white border-b border-slate-100">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Rechercher par désignation ou référence…"
+          className="w-full bg-slate-100 rounded-md px-3 py-2 text-[14px] outline-none"
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto bg-white">
+        {filtered.length === 0 && <div className="text-center text-slate-400 text-sm mt-10 px-6">Aucun article. Touchez + pour en créer un.</div>}
+        {filtered.map((a) => (
+          <SwipeRow key={a.id} onDelete={() => onDelete(a.id)} onClick={() => setModal({ article: a })}>
+            <div className="w-full flex items-center justify-between px-3 py-3">
+              <div className="min-w-0">
+                <div className="text-[15px] text-slate-800 truncate">{a.label}</div>
+                <div className="text-[12px] text-slate-400 truncate">
+                  {[a.reference, a.supplier].filter(Boolean).join(" · ")}
+                </div>
+              </div>
+              <div className="text-right shrink-0 ml-2">
+                <div className="text-[14px] font-medium text-slate-800">{money(a.salePrice)}</div>
+                <div className="text-[11px] text-slate-400">achat {money(a.purchasePrice)}</div>
+              </div>
+            </div>
+          </SwipeRow>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ DEVIS
+function buildQuotePdf(quote, item, client) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const items = quote.items || [];
+  let y = 20;
+
+  doc.setFontSize(18); doc.setFont(undefined, "bold");
+  doc.text("C.H.R 26", 14, y); y += 6;
+  doc.setFontSize(10); doc.setFont(undefined, "normal");
+  doc.text("Devis", 14, y); y += 10;
+
+  doc.setFontSize(11); doc.setFont(undefined, "bold");
+  doc.text(client ? client.name : (item.client || ""), 14, y); y += 5;
+  doc.setFont(undefined, "normal"); doc.setFontSize(10);
+  if (client && client.address) { doc.text([client.address, [client.postalCode, client.city].filter(Boolean).join(" ")].filter(Boolean).join(", "), 14, y); y += 5; }
+  if (client && client.phone) { doc.text(client.phone, 14, y); y += 5; }
+  y += 4;
+  doc.text(`Date : ${frDate(item.date)}`, 14, y); y += 5;
+  if (item.equipment) { doc.text(`Matériel : ${item.equipment}`, 14, y); y += 5; }
+  y += 6;
+
+  doc.setFont(undefined, "bold");
+  doc.text("Désignation", 14, y);
+  doc.text("Qté", 118, y);
+  doc.text("PU", 138, y);
+  doc.text("TVA", 160, y);
+  doc.text("Total", 180, y);
+  doc.setFont(undefined, "normal");
+  y += 2;
+  doc.line(14, y, 196, y);
+  y += 6;
+
+  let totalHT = 0, totalTVA = 0;
+  items.forEach((it) => {
+    const lineHT = it.quantity * it.unitPrice;
+    const tva = it.tvaRate == null ? 20 : it.tvaRate;
+    const lineTVA = lineHT * (tva / 100);
+    totalHT += lineHT; totalTVA += lineTVA;
+    const desLines = doc.splitTextToSize(it.designation, 100);
+    doc.text(desLines, 14, y);
+    doc.text(String(it.quantity), 118, y);
+    doc.text(money(it.unitPrice), 138, y);
+    doc.text(`${tva}%`, 160, y);
+    doc.text(money(lineHT), 180, y);
+    y += Math.max(6, desLines.length * 5);
+    if (y > 270) { doc.addPage(); y = 20; }
+  });
+
+  y += 4;
+  doc.line(120, y, 196, y);
+  y += 7;
+  doc.text("Total HT", 138, y); doc.text(money(totalHT), 180, y); y += 6;
+  doc.text("Total TVA", 138, y); doc.text(money(totalTVA), 180, y); y += 6;
+  doc.setFont(undefined, "bold");
+  doc.text("Total TTC", 138, y); doc.text(money(totalHT + totalTVA), 180, y);
+
+  return doc;
+}
+
+function QuoteScreen({ quote, item, client, articles, onUpdateItems, onSetStatus, onBack }) {
+  const [search, setSearch] = useState("");
+  const [qtyFor, setQtyFor] = useState(null);
+  const [qty, setQty] = useState("1");
+  const [tva, setTva] = useState("20");
+  const [freeLine, setFreeLine] = useState(null); // { designation, unitPrice, quantity, tvaRate }
+
+  if (!quote) return <div className="p-6 text-slate-400">Chargement du devis…</div>;
+  const items = quote.items || [];
+  const locked = quote.status === "valide";
+
+  const filtered = articles.filter((a) => {
+    if (!search.trim()) return false;
+    const s = search.toLowerCase();
+    return a.label.toLowerCase().includes(s) || a.reference.toLowerCase().includes(s);
+  }).slice(0, 20);
+
+  function addLine(article, quantity, tvaRate) {
+    const q = Math.max(1, parseInt(quantity, 10) || 1);
+    const rate = tvaRate === "" || tvaRate == null ? 20 : parseFloat(tvaRate);
+    const next = [...items, {
+      articleId: article.id, designation: article.label, reference: article.reference,
+      quantity: q, unitPrice: article.salePrice, purchasePrice: article.purchasePrice, tvaRate: rate,
+    }];
+    onUpdateItems(next);
+    setQtyFor(null); setQty("1"); setTva("20"); setSearch("");
+  }
+  function addFreeLine(vals) {
+    const q = Math.max(1, parseFloat(vals.quantity) || 1);
+    const price = parseFloat(vals.unitPrice) || 0;
+    const rate = vals.tvaRate === "" || vals.tvaRate == null ? 0 : parseFloat(vals.tvaRate);
+    const next = [...items, {
+      articleId: null, designation: vals.designation.trim() || "Ligne", reference: "",
+      quantity: q, unitPrice: price, purchasePrice: 0, tvaRate: rate,
+    }];
+    onUpdateItems(next);
+    setFreeLine(null);
+  }
+  function removeLine(idx) { onUpdateItems(items.filter((_, i) => i !== idx)); }
+  function changeQty(idx, delta) {
+    onUpdateItems(items.map((it, i) => (i === idx ? { ...it, quantity: Math.max(1, it.quantity + delta) } : it)));
+  }
+
+  const totalHT = items.reduce((s, it) => s + it.quantity * it.unitPrice, 0);
+  const totalTVA = items.reduce((s, it) => s + it.quantity * it.unitPrice * ((it.tvaRate == null ? 20 : it.tvaRate) / 100), 0);
+  const totalTTC = totalHT + totalTVA;
+  const totalPurchase = items.reduce((s, it) => s + it.quantity * (it.purchasePrice || 0), 0);
+  const margin = totalHT - totalPurchase;
+  const marginPct = totalHT > 0 ? (margin / totalHT) * 100 : 0;
+
+  function downloadPdf() {
+    const doc = buildQuotePdf(quote, item, client);
+    doc.save(`devis-${(client ? client.name : item.client || "client").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+  }
+  function sendByEmail() {
+    downloadPdf();
+    const to = (client && client.email) || "";
+    const subject = encodeURIComponent(`Devis C.H.R 26 — ${client ? client.name : item.client}`);
+    const body = encodeURIComponent(
+      `Bonjour,\n\nVeuillez trouver ci-joint notre devis.\n\nLe PDF vient d'être téléchargé sur votre téléphone — pensez à le joindre à cet email (bouton trombone / pièce jointe) avant l'envoi.\n\nCordialement,\nC.H.R 26`
+    );
+    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <ScreenHeader title="Devis" onBack={onBack} />
+      <div className="flex-1 overflow-y-auto bg-slate-100">
+        <div className="bg-white p-3">
+          <div className="text-[14px] font-medium text-slate-800">{item.client}</div>
+          {item.equipment && <div className="text-[13px] text-slate-500">{item.equipment}</div>}
+          <div className="mt-1">
+            {quote.status === "valide"
+              ? <span className="text-[11px] px-1.5 py-0.5 rounded-full text-white" style={{ background: GREEN }}>Validé</span>
+              : <span className="text-[11px] px-1.5 py-0.5 rounded-full text-white" style={{ background: AMBER }}>Brouillon</span>}
+          </div>
+        </div>
+
+        {!locked && (
+          <div className="p-3 bg-white border-t border-slate-100 space-y-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher une pièce à ajouter…"
+              className="w-full bg-slate-100 rounded-md px-3 py-2 text-[14px] outline-none"
+            />
+            {search.trim() && (
+              <div className="border border-slate-200 rounded-md overflow-hidden">
+                {filtered.length === 0 && <div className="px-3 py-2 text-[13px] text-slate-400">Aucun résultat.</div>}
+                {filtered.map((a) => (
+                  <div key={a.id} className="flex items-center justify-between px-3 py-2 border-b border-slate-100 last:border-b-0">
+                    <div className="min-w-0">
+                      <div className="text-[14px] text-slate-800 truncate">{a.label}</div>
+                      <div className="text-[12px] text-slate-400">{a.reference} · {money(a.salePrice)} · TVA {a.tvaRate}%</div>
+                    </div>
+                    <button onClick={() => { setQtyFor(a); setQty("1"); setTva(String(a.tvaRate)); }} className="w-8 h-8 rounded-full text-white text-xl leading-none shrink-0" style={{ background: GREEN }}>+</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setFreeLine({ designation: "", unitPrice: "", quantity: "1", tvaRate: "0" })} className="w-full py-2 rounded-md border border-dashed border-slate-300 text-slate-600 text-[13px]">
+              + Ligne libre (main d'œuvre, déplacement…)
+            </button>
+          </div>
+        )}
+
+        <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Lignes du devis</div>
+        <div className="bg-white">
+          {items.length === 0 && <div className="px-3 py-3 text-[13px] text-slate-400">Aucune ligne ajoutée pour l'instant.</div>}
+          {items.map((it, idx) => (
+            <div key={idx} className="px-3 py-3 border-b border-slate-200">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[14px] text-slate-800 flex-1 min-w-0 truncate">{it.designation}</span>
+                <span className="text-[14px] font-medium text-slate-800 shrink-0">{money(it.quantity * it.unitPrice)}</span>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-[12px] text-slate-400">{money(it.unitPrice)} / unité · TVA {it.tvaRate == null ? 20 : it.tvaRate}%</span>
+                {!locked ? (
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => changeQty(idx, -1)} className="w-7 h-7 rounded-full border border-slate-300 text-slate-600">−</button>
+                    <span className="text-[14px] w-6 text-center" style={{ fontFamily: "JetBrains Mono, monospace" }}>{it.quantity}</span>
+                    <button onClick={() => changeQty(idx, 1)} className="w-7 h-7 rounded-full border border-slate-300 text-slate-600">+</button>
+                    <button onClick={() => removeLine(idx)} className="ml-2 text-red-500 text-[13px]">Supprimer</button>
+                  </div>
+                ) : (
+                  <span className="text-[13px] text-slate-500">x{it.quantity}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-white mt-4 p-3 space-y-1">
+          <div className="flex items-center justify-between text-[14px] text-slate-600"><span>Total HT</span><span>{money(totalHT)}</span></div>
+          <div className="flex items-center justify-between text-[14px] text-slate-600"><span>Total TVA</span><span>{money(totalTVA)}</span></div>
+          <div className="flex items-center justify-between text-[16px] font-semibold text-slate-800 pt-1 border-t border-slate-100"><span>Total TTC</span><span>{money(totalTTC)}</span></div>
+        </div>
+
+        <div className="bg-slate-200 mt-4 p-3">
+          <div className="text-[11px] uppercase tracking-wider text-slate-500 font-medium mb-1">Vue interne — jamais visible client</div>
+          <div className="text-[13px] text-slate-600 flex justify-between"><span>Coût d'achat total</span><span>{money(totalPurchase)}</span></div>
+          <div className="text-[13px] text-slate-600 flex justify-between"><span>Montant vendu (HT)</span><span>{money(totalHT)}</span></div>
+          <div className="text-[13px] font-medium text-slate-800 flex justify-between mt-1"><span>Marge réalisée</span><span>{money(margin)} ({marginPct.toFixed(0)}%)</span></div>
+        </div>
+
+        <div className="p-3 space-y-2 mt-2 mb-6">
+          <button onClick={downloadPdf} className="w-full py-2.5 rounded-md border border-slate-300 text-slate-700 font-medium text-[15px] bg-white">📄 Télécharger le devis en PDF</button>
+          <button onClick={sendByEmail} className="w-full py-2.5 rounded-md border border-slate-300 text-slate-700 font-medium text-[15px] bg-white">✉️ Envoyer par email</button>
+          {!locked ? (
+            <button onClick={() => onSetStatus("valide")} className="w-full py-2.5 rounded-md text-white font-medium text-[15px]" style={{ background: GREEN }}>Valider le devis</button>
+          ) : (
+            <button onClick={() => onSetStatus("brouillon")} className="w-full py-2.5 rounded-md border border-slate-300 text-slate-700 font-medium text-[15px] bg-white">Déverrouiller pour modifier</button>
+          )}
+        </div>
+      </div>
+
+      {qtyFor && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30 p-4" onClick={() => setQtyFor(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl w-full max-w-xs p-4">
+            <div className="text-[15px] font-semibold text-slate-800 mb-1">{qtyFor.label}</div>
+            <div className="text-[12px] text-slate-500 mb-2">Quantité</div>
+            <input
+              autoFocus type="number" min="1" value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              className="w-full border border-slate-300 rounded-md px-3 py-2 text-[16px] text-center outline-none mb-3"
+            />
+            <div className="text-[12px] text-slate-500 mb-2">TVA (%)</div>
+            <input
+              type="number" min="0" step="0.5" value={tva}
+              onChange={(e) => setTva(e.target.value)}
+              className="w-full border border-slate-300 rounded-md px-3 py-2 text-[16px] text-center outline-none mb-3"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setQtyFor(null)} className="flex-1 py-2 rounded-md border border-slate-300 text-slate-700 text-[14px]">Annuler</button>
+              <button onClick={() => addLine(qtyFor, qty, tva)} className="flex-1 py-2 rounded-md text-white text-[14px]" style={{ background: GREEN }}>Valider</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {freeLine && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-30 p-4" onClick={() => setFreeLine(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl w-full max-w-xs p-4 space-y-2">
+            <div className="text-[15px] font-semibold text-slate-800">Ligne libre</div>
+            <div>
+              <div className="text-[12px] text-slate-500 mb-1">Désignation</div>
+              <input autoFocus value={freeLine.designation} onChange={(e) => setFreeLine({ ...freeLine, designation: e.target.value })} placeholder="Ex : Main d'œuvre" className="w-full border border-slate-300 rounded-md px-3 py-2 text-[15px] outline-none" />
+            </div>
+            <div>
+              <div className="text-[12px] text-slate-500 mb-1">Prix unitaire (€)</div>
+              <input type="number" step="0.01" value={freeLine.unitPrice} onChange={(e) => setFreeLine({ ...freeLine, unitPrice: e.target.value })} placeholder="Ex : 60" className="w-full border border-slate-300 rounded-md px-3 py-2 text-[15px] outline-none" />
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <div className="text-[12px] text-slate-500 mb-1">Quantité</div>
+                <input type="number" min="1" value={freeLine.quantity} onChange={(e) => setFreeLine({ ...freeLine, quantity: e.target.value })} className="w-full border border-slate-300 rounded-md px-3 py-2 text-[15px] outline-none" />
+              </div>
+              <div className="flex-1">
+                <div className="text-[12px] text-slate-500 mb-1">TVA (%)</div>
+                <input type="number" min="0" step="0.5" value={freeLine.tvaRate} onChange={(e) => setFreeLine({ ...freeLine, tvaRate: e.target.value })} className="w-full border border-slate-300 rounded-md px-3 py-2 text-[15px] outline-none" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setFreeLine(null)} className="flex-1 py-2 rounded-md border border-slate-300 text-slate-700 text-[14px]">Annuler</button>
+              <button onClick={() => addFreeLine(freeLine)} className="flex-1 py-2 rounded-md text-white text-[14px]" style={{ background: GREEN }}>Ajouter</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
